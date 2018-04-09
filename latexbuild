@@ -1,0 +1,226 @@
+#!/usr/bin/env python
+
+"""Reasonably automatic build system for LaTeX documents."""
+
+from __future__ import print_function
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+
+
+LATEXRUN_URL = "https://github.com/aclements/latexrun.git"
+LATEXDEPS_URL = "https://github.com/llvilanova/latexdeps.git"
+
+
+def which(cmd, mode=os.F_OK | os.X_OK, path=None):
+    # Taken from Python 3.3
+    def _access_check(fn, mode):
+        return (os.path.exists(fn) and os.access(fn, mode)
+                and not os.path.isdir(fn))
+
+    if os.path.dirname(cmd):
+        if _access_check(cmd, mode):
+            return cmd
+        return None
+
+    if path is None:
+        path = os.environ.get("PATH", os.defpath)
+    if not path:
+        return None
+    path = path.split(os.pathsep)
+
+    if sys.platform == "win32":
+        if not os.curdir in path:
+            path.insert(0, os.curdir)
+        pathext = os.environ.get("PATHEXT", "").split(os.pathsep)
+        if any(cmd.lower().endswith(ext.lower()) for ext in pathext):
+            files = [cmd]
+        else:
+            files = [cmd + ext for ext in pathext]
+    else:
+        files = [cmd]
+
+    seen = set()
+    for dir in path:
+        normdir = os.path.normcase(dir)
+        if not normdir in seen:
+            seen.add(normdir)
+            for thefile in files:
+                name = os.path.join(dir, thefile)
+                if _access_check(name, mode):
+                    return name
+    return None
+
+
+class ProgramError (Exception):
+    def __init__(self, path):
+        Exception.__init__(self, "Could not find program %r" % path)
+
+
+def ensure_program(verbose_cmds, path, default_path, git, url):
+    download = path is None
+    if download:
+        path = default_path
+
+    if not which(path) and download:
+        if not which(git):
+            raise ProgramError(git)
+        print("Downloading %s ..." % url)
+        cmd = ["git", "clone", url, os.path.dirname(default_path)]
+        if verbose_cmds:
+            print(" ".join(cmd))
+        subprocess.check_call(cmd)
+
+    if not which(path):
+        raise ProgramError(path)
+
+    return path
+
+
+def build(verbose_cmds, document,
+          latexrun, latexrun_args,
+          latexdeps, latexdeps_args,
+          lacheck):
+    # comput document base name
+    document_base = document
+    if document_base.endswith(".tex"):
+        document_base = ".".join(document.split(".tex")[:-1])
+
+    # get latexrun output directory
+    try:
+        out_idx = latexrun_args.index("-O")
+    except ValueError:
+        output = "latex.out"
+    else:
+        output = latexrun_args[out_idx+1]
+
+
+    if latexdeps is not None:
+        # first run to get the document's compile log
+        with open(os.devnull, "w") as fnull:
+            cmd = [latexrun] + latexrun_args + [document]
+            if verbose_cmds:
+                print(" ".join(cmd))
+            subprocess.call(cmd, stdout=fnull, stderr=fnull)
+
+        # process dependencies
+        log_path = os.path.join(output, document_base + ".log")
+        if os.path.exists(log_path):
+            cmd = [latexdeps] + latexdeps_args + [log_path]
+            if verbose_cmds:
+                print(" ".join(cmd))
+            subprocess.call(cmd)
+
+    # second run to produce document
+    cmd = [latexrun] + latexrun_args + [document]
+    if verbose_cmds:
+        print(" ".join(cmd))
+    subprocess.check_call(cmd)
+
+    synctex_name = document_base + ".synctex.gz"
+    synctex_src = os.path.join(output, synctex_name)
+    if os.path.exists(synctex_src):
+        shutil.copyfile(synctex_src, os.path.join(os.path.curdir, synctex_name))
+
+    # use lacheck if provided
+    if lacheck is not None:
+        cmd = [lacheck, document]
+        if verbose_cmds:
+            print(" ".join(cmd))
+        subprocess.check_call(cmd)
+
+
+def main(base, argv):
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog="""
+        If any of the programs are not provided, we will try to use a system
+        installation. If not available, in the case of latexrun and latexdeps
+        we will try to download them into %s/deps/.
+        """ % base,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    parser.add_argument("document",
+                        help="target document to compile")
+
+    parser.add_argument("--latexrun",
+                        help="path to latexrun program")
+    parser.add_argument("--latexrun-args",
+                        action="append",
+                        default=[],
+                        help="additional arguments to latexrun")
+
+    parser.add_argument("--disable-latexdeps",
+                        action="store_true",
+                        help="do not use latexdeps")
+    parser.add_argument("--latexdeps",
+                        help="path to latexdeps program")
+    parser.add_argument("--latexdeps-args",
+                        action="append",
+                        default=[],
+                        help="additional arguments to latexdeps")
+
+    parser.add_argument("--lacheck",
+                        help="path to lacheck program")
+
+    parser.add_argument("--verbose-cmds",
+                        action="store_true",
+                        help="print commands as they are executed")
+    parser.add_argument("--git",
+                        default="git",
+                        help="path to git program when downloading dependencies")
+
+    args = parser.parse_args(argv)
+
+    # check latexrun
+    if args.latexrun is None:
+        args.latexrun = which("latexrun")
+    try:
+        args.latexrun = ensure_program(
+            args.verbose_cmds,
+            args.latexrun, os.path.join(base, "deps", "latexrun", "latexrun"),
+            args.git, LATEXRUN_URL)
+    except (subprocess.CalledProcessError, ProgramError) as e:
+        parser.exit(1, str(e) + "\n")
+
+    # check latexdeps
+    if args.latexdeps is None:
+        args.latexdeps = which("latexdeps")
+    if args.disable_latexdeps:
+        args.latexdeps = None
+    if not args.disable_latexdeps:
+        try:
+            args.latexdeps = ensure_program(
+                args.verbose_cmds,
+                args.latexdeps, os.path.join(base, "deps", "latexdeps", "latexdeps"),
+                args.git, LATEXDEPS_URL)
+        except (subprocess.CalledProcessError, ProgramError) as e:
+            parser.exit(1, str(e) + "\n")
+
+    # check lacheck
+    if args.lacheck is None:
+        # try to find a system installation
+        args.lacheck = which("lacheck")
+    if args.lacheck is not None:
+        try:
+            ensure_program(False, args.lacheck, None, None, None)
+        except (subprocess.CalledProcessError, ProgramError) as e:
+            parser.exit(1, str(e) + "\n")
+
+    # build document
+    try:
+        build(args.verbose_cmds,
+              args.document,
+              args.latexrun, args.latexrun_args,
+              args.latexdeps, args.latexdeps_args,
+              args.lacheck)
+    except subprocess.CalledProcessError:
+        parser.exit(1)
+
+
+if __name__ == "__main__":
+    base = os.path.dirname(sys.argv[0])
+    main(base, sys.argv[1:])

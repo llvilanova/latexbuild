@@ -51,7 +51,7 @@ force:
 ### build
 
 %.pdf: %.tex
-%.pdf: BASE = $(dir $(lastword $(MAKEFILE_LIST)))
+%.pdf: LATEXBUILD = $(strip $(foreach mf,$(MAKEFILE_LIST),$(wildcard $(dir $(mf))/latexbuild)))
 ifneq ($(LATEXRUN),)
 %.pdf: ARGS += --latexrun="$(LATEXRUN)"
 endif
@@ -64,16 +64,17 @@ ifneq ($(GIT),)
 %.pdf: ARGS += --git="$(GIT)"
 endif
 %.pdf: force
-	TEXINPUTS=$(TEXINPUTS): "$(BASE)/latexbuild" "$*.tex" $(LATEXBUILD_ARGS) $(ARGS)
+	TEXINPUTS=$(TEXINPUTS): "$(LATEXBUILD)" "$*.tex" $(LATEXBUILD_ARGS) $(ARGS)
 
 
 ######################################################################
 ### Miscellaneous rules
 
-help: force
-	@echo "Default latexbuild targets:"
+help:: force
+	@echo "latexbuild targets:"
 	@echo "   <name>.pdf : generate a single pdf document from '<name>.tex'"
 	@echo "   clean      : clean intermediate files"
+	@echo ""
 
 clean:: force
 	rm -Rf latex.out

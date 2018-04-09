@@ -21,7 +21,7 @@ all::
 %:
 	@echo Downloading 'latexbuild'...
 	@rm -Rf .deps/latexbuild
-	@git clone https://https://github.com/llvilanova/latexbuild.git .deps/latexbuild
+	@git clone https://github.com/llvilanova/latexbuild.git .deps/latexbuild
 	@# Re-run to get proper target rule definition
 	@$(MAKE) $@
 else
@@ -36,4 +36,4 @@ all:: $(DOCUMENTS)
 
 # New rule that also removes the generated documents
 distclean: clean
-	rm -f $(DOCUMENTS)
+	rm -f $(DOCUMENTS) $(foreach doc,$(DOCUMENTS),$(basename $(doc)).synctex.gz)

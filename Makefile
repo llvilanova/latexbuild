@@ -64,7 +64,7 @@ ifneq ($(GIT),)
 %.pdf: ARGS += --git="$(GIT)"
 endif
 %.pdf: force
-	TEXINPUTS=:$(TEXINPUTS) "$(BASE)/latexbuild" "$*.tex" $(LATEXBUILD_ARGS) $(ARGS)
+	TEXINPUTS=$(TEXINPUTS): "$(BASE)/latexbuild" "$*.tex" $(LATEXBUILD_ARGS) $(ARGS)
 
 
 ######################################################################
